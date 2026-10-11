@@ -60,6 +60,24 @@ export default {
             subcommand
                 .setName("dashboard")
                 .setDescription("Open the verification system configuration dashboard")
+        )
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName("reaction")
+                .setDescription("Post the rules and grant the verified role when someone reacts ✅")
+                .addChannelOption(option =>
+                    option
+                        .setName("salon")
+                        .setDescription("Channel where the rules message will be posted, e.g. #rules")
+                        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+                        .setRequired(true)
+                )
+                .addRoleOption(option =>
+                    option
+                        .setName("role")
+                        .setDescription("Role to grant after accepting the rules, e.g. Vérifié")
+                        .setRequired(true)
+                )
         ),
 
     async execute(interaction, config, client) {
@@ -83,6 +101,8 @@ export default {
                     return await handleRemove(interaction, guild, client);
                 case "dashboard":
                     return await verificationDashboard.execute(interaction, config, client);
+                case "reaction":
+                    return await handleReactionSetup(interaction, guild, client);
                 default:
                     throw createError(
                         `Unknown subcommand: ${subcommand}`,
@@ -247,4 +267,112 @@ async function handleRemove(interaction, guild, client) {
     return await InteractionHelper.safeReply(interaction, {
         embeds: [successEmbed('Verification Removed', `Verification removed from ${targetUser.tag}.`)]
     });
+}
+
+async function handleReactionSetup(interaction, guild, client) {
+    const verificationChannel = interaction.options.getChannel("salon", true);
+    const verifiedRole = interaction.options.getRole("role", true);
+    const botMember = guild.members.me ?? await guild.members.fetchMe().catch(() => null);
+
+    if (!botMember) {
+        throw createError(
+            'Bot member not found in guild cache',
+            ErrorTypes.CONFIGURATION,
+            'I could not verify my permissions in this server. Please try again in a moment.',
+            { guildId: guild.id }
+        );
+    }
+
+    const requiredPermissions = [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.EmbedLinks,
+        PermissionFlagsBits.AddReactions,
+        PermissionFlagsBits.ReadMessageHistory,
+    ];
+    const channelPermissions = verificationChannel.permissionsFor(botMember);
+    const missingPermissions = requiredPermissions.filter(permission =>
+        !channelPermissions?.has(permission)
+    );
+    if (missingPermissions.length > 0) {
+        throw createError(
+            'Missing permissions in reaction verification channel',
+            ErrorTypes.PERMISSION,
+            'In the selected channel, I need **View Channel**, **Send Messages**, **Embed Links**, **Add Reactions**, and **Read Message History**.',
+            { guildId: guild.id, channelId: verificationChannel.id, missingPermissions }
+        );
+    }
+
+    if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
+        throw createError(
+            'Missing ManageRoles permission',
+            ErrorTypes.PERMISSION,
+            "I need the 'Manage Roles' permission to give verified roles.",
+            { missingPermission: 'ManageRoles' }
+        );
+    }
+
+    const dangerousPermissions = [
+        PermissionFlagsBits.Administrator,
+        PermissionFlagsBits.ManageGuild,
+        PermissionFlagsBits.ManageRoles,
+        PermissionFlagsBits.ManageChannels,
+        PermissionFlagsBits.ManageWebhooks,
+        PermissionFlagsBits.BanMembers,
+        PermissionFlagsBits.KickMembers,
+        PermissionFlagsBits.MentionEveryone,
+    ];
+    if (
+        verifiedRole.id === guild.id ||
+        verifiedRole.managed ||
+        verifiedRole.position >= botMember.roles.highest.position ||
+        dangerousPermissions.some(permission => verifiedRole.permissions.has(permission))
+    ) {
+        throw createError(
+            'Invalid verified role selected',
+            ErrorTypes.PERMISSION,
+            'Choose a normal role without administrative permissions, and place my bot role above **' + verifiedRole.name + '** in **Server Settings → Roles**.',
+            { roleId: verifiedRole.id, rolePosition: verifiedRole.position, botRolePosition: botMember.roles.highest.position }
+        );
+    }
+
+    await InteractionHelper.safeDefer(interaction);
+
+    let verificationMessage = null;
+    let configKey = null;
+    try {
+        const embed = createEmbed({
+            title: '🛡️ Vérification du serveur',
+            description:
+                'Bienvenue sur le serveur ! 👋\\n\\n' +
+                'Lis le règlement, puis **réagis avec ✅ à ce message pour confirmer que tu l’acceptes**.\\n\\n' +
+                'Le rôle **' + verifiedRole.name + '** te sera automatiquement attribué pour accéder aux salons réservés aux membres vérifiés.',
+            color: getColor('success'),
+        });
+
+        verificationMessage = await verificationChannel.send({ embeds: [embed] });
+        configKey = `verification:reaction:${guild.id}:${verificationMessage.id}`;
+
+        await client.db.set(configKey, {
+            guildId: guild.id,
+            channelId: verificationChannel.id,
+            messageId: verificationMessage.id,
+            roleId: verifiedRole.id,
+        });
+
+        await verificationMessage.react('✅');
+
+        await InteractionHelper.safeEditReply(interaction, {
+            embeds: [
+                successEmbed(
+                    'Verification Message Published',
+                    `✅ Message published in ${verificationChannel}. Members can react with ✅ to receive the ${verifiedRole} role.`
+                )
+            ]
+        });
+    } catch (error) {
+        if (configKey) await client.db.delete(configKey).catch(() => {});
+        if (verificationMessage) await verificationMessage.delete().catch(() => {});
+        throw error;
+    }
 }
