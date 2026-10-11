@@ -115,7 +115,7 @@ async function respondAndSpeak(guildId, text, username) {
                 content: `${username} dit : ${text}`,
             },
         ],
-        max_tokens: 70,
+        max_tokens: 180,
     });
 
     const reply = result.choices?.[0]?.message?.content?.trim();
@@ -169,7 +169,7 @@ async function captureSpeaker(guildId, userId) {
         const stream = session.connection.receiver.subscribe(userId, {
             end: {
                 behavior: EndBehaviorType.AfterSilence,
-                duration: 350,
+                duration: 500,
             },
         });
 
