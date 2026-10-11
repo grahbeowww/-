@@ -78,7 +78,7 @@ async function makeSpeech(text) {
             voice: 'fr-FR-HenriNeural',
             lang: 'fr-FR',
             outputFormat: 'audio-24khz-96kbitrate-mono-mp3',
-            rate: '-5%',
+            rate: '+20%',
             pitch: '-2Hz',
             timeout: 15000,
         });
@@ -96,7 +96,7 @@ async function respondAndSpeak(guildId, text, username) {
     if (!session || !text) return;
 
     const result = await groq.chat.completions.create({
-        model: 'openai/gpt-oss-120b',
+        model: 'llama-3.1-8b-instant',
         messages: [
             {
                 role: 'system',
@@ -115,7 +115,7 @@ async function respondAndSpeak(guildId, text, username) {
                 content: `${username} dit : ${text}`,
             },
         ],
-        max_tokens: 120,
+        max_tokens: 70,
     });
 
     const reply = result.choices?.[0]?.message?.content?.trim();
@@ -169,7 +169,7 @@ async function captureSpeaker(guildId, userId) {
         const stream = session.connection.receiver.subscribe(userId, {
             end: {
                 behavior: EndBehaviorType.AfterSilence,
-                duration: 750,
+                duration: 350,
             },
         });
 
@@ -276,7 +276,6 @@ export async function startVoiceAssistant(guild, channel, botId) {
     sessions.set(guild.id, session);
 
     connection.receiver.speaking.on('start', userId => {
-        console.log(`[Dante voice] Parole détectée : ${userId}`);
         void captureSpeaker(guild.id, userId);
     });
 
