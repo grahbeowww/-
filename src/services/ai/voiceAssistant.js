@@ -96,7 +96,7 @@ async function respondAndSpeak(guildId, text, username) {
     if (!session || !text) return;
 
     const result = await groq.chat.completions.create({
-        model: 'openai/gpt-oss-20b',
+        model: 'llama-3.3-70b-versatile',
         messages: [
             {
                 role: 'system',
@@ -115,7 +115,7 @@ async function respondAndSpeak(guildId, text, username) {
                 content: `${username} dit : ${text}`,
             },
         ],
-        max_tokens: 75,
+        max_tokens: 120,
     });
 
     const reply = result.choices?.[0]?.message?.content?.trim();
