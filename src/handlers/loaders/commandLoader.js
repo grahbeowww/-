@@ -269,6 +269,25 @@ export async function registerCommands(client, options = {}) {
     try {
         const { commands, totalSubcommands } = collectCommandPayloads(client);
         await registerGlobalCommands(client, clientId, commands, totalSubcommands);
+
+        // Register the voice assistant as a guild command too, so it appears
+        // immediately instead of waiting for global slash-command propagation.
+        // Preserve any existing guild commands while adding/updating /parler.
+        const guildId = process.env.GUILD_ID;
+        const voiceCommand = client.commands.get('parler');
+        if (guildId && voiceCommand?.data?.toJSON) {
+            const guildRoute = `/applications/${clientId}/guilds/${guildId}/commands`;
+            const existingGuildCommands = await client.rest.get(guildRoute);
+            const voicePayload = voiceCommand.data.toJSON();
+            const guildCommands = [
+                ...(Array.isArray(existingGuildCommands)
+                    ? existingGuildCommands.filter(command => command.name !== voicePayload.name)
+                    : []),
+                voicePayload,
+            ];
+            await client.rest.put(guildRoute, { body: guildCommands });
+            logger.info('Registered /parler as an immediate guild slash command');
+        }
     } catch (error) {
         logger.error('Error registering commands:', error);
         throw error;
