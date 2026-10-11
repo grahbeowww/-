@@ -61,10 +61,10 @@ async function transcribe(pcm) {
     );
 
     const result = await groq.audio.transcriptions.create({
-        model: 'whisper-large-v3',
+        model: 'whisper-large-v3-turbo',
         file,
         language: 'fr',
-        prompt: 'Conversation orale spontanée en français de France entre amis sur Discord. Français familier, expressions courantes et argot. Transcris uniquement les mots réellement entendus, sans inventer de sous-titres, de musique ou de contenu de fond.',
+        prompt: 'Français de France parlé spontanément sur Discord entre amis, souvent en jouant. Reconnais le français familier, les mots raccourcis, les noms de jeux et le vocabulaire gaming. Respecte exactement les mots entendus, même si la phrase est familière ou grossière. Ne complète pas les phrases par supposition. Si le son est incompréhensible, transcris seulement ce qui est réellement audible. N’invente jamais de sous-titres ni de commentaires.',
     });
 
     return result.text?.trim() || '';
@@ -169,7 +169,7 @@ async function captureSpeaker(guildId, userId) {
         const stream = session.connection.receiver.subscribe(userId, {
             end: {
                 behavior: EndBehaviorType.AfterSilence,
-                duration: 650,
+                duration: 750,
             },
         });
 
@@ -215,7 +215,6 @@ async function captureSpeaker(guildId, userId) {
         const likelyHallucination = [
             'sous titrage societe radio canada',
             'sous titrage radio canada',
-            'merci',
             'visage souriant',
         ].includes(normalized);
 
