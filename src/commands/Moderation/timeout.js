@@ -9,32 +9,32 @@ const durationChoices = [
     { name: "5 minutes", value: 5 },
     { name: "10 minutes", value: 10 },
     { name: "30 minutes", value: 30 },
-    { name: "1 hour", value: 60 },
-    { name: "6 hours", value: 360 },
-    { name: "1 day", value: 1440 },
-    { name: "1 week", value: 10080 },
+    { name: "1 heure", value: 60 },
+    { name: "6 heures", value: 360 },
+    { name: "1 jour", value: 1440 },
+    { name: "7 jours", value: 10080 },
 ];
 
 export default {
     data: new SlashCommandBuilder()
         .setName("timeout")
-        .setDescription("Timeout a user for a specific duration.")
+        .setDescription("Mute temporairement un membre du serveur.")
         .addUserOption((option) =>
             option
                 .setName("target")
-                .setDescription("User to timeout")
+                .setDescription("Membre à rendre muet temporairement")
                 .setRequired(true),
         )
         .addIntegerOption(
             (option) =>
                 option
                     .setName("duration")
-                    .setDescription("Duration of the timeout")
+                    .setDescription("Durée du mute temporaire")
                     .setRequired(true)
                     .addChoices(...durationChoices),
         )
         .addStringOption((option) =>
-            option.setName("reason").setDescription("Reason for the timeout"),
+            option.setName("reason").setDescription("Raison du mute temporaire"),
         )
         .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
     category: "moderation",
@@ -102,8 +102,8 @@ export default {
         await InteractionHelper.safeEditReply(interaction, {
             embeds: [
                 successEmbed(
-                    `⏳ **Timed out** ${targetUser.tag} for ${durationDisplay}.`,
-                    `**Reason:** ${reason}\n**Case ID:** #${result.caseId}`,
+                    `⏳ **Mute temporaire appliqué à** ${targetUser.tag} pendant ${durationDisplay}.`,
+                    `**Raison :** ${reason}\n**Dossier :** #${result.caseId}`,
                 ),
             ],
         });

@@ -15,6 +15,30 @@ export default {
   async execute(member) {
     try {
         const { guild, user } = member;
+
+        // Enforce the persistent blacklist if someone is unbanned manually and tries to rejoin.
+        try {
+            const storedBlacklist = await member.client.db.get(`moderation:blacklist:${guild.id}`).catch(() => null);
+            const blacklistData = storedBlacklist && typeof storedBlacklist === 'object'
+                && 'value' in storedBlacklist && !('entries' in storedBlacklist)
+                ? storedBlacklist.value
+                : storedBlacklist;
+            const blacklistEntry = blacklistData?.entries?.[user.id];
+            if (blacklistEntry) {
+                try {
+                    await guild.members.ban(user.id, {
+                        reason: `Blacklist automatique : ${String(blacklistEntry.reason || 'Aucune raison indiquée').slice(0, 400)}`,
+                    });
+                    logger.warn(`Blacklisted user ${user.id} rejoined guild ${guild.id}; automatic ban applied.`);
+                } catch (banError) {
+                    logger.error(`Could not re-ban blacklisted user ${user.id} in guild ${guild.id}:`, banError);
+                }
+                return;
+            }
+        } catch (blacklistError) {
+            logger.error(`Failed to check blacklist for guild ${guild.id}:`, blacklistError);
+        }
+
         
         const config = await getGuildConfig(member.client, guild.id);
         

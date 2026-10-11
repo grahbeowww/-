@@ -270,33 +270,23 @@ export async function registerCommands(client, options = {}) {
         const { commands, totalSubcommands } = collectCommandPayloads(client);
         await registerGlobalCommands(client, clientId, commands, totalSubcommands);
 
-        // Register the voice assistant as a guild command too, so it appears
-        // immediately instead of waiting for global slash-command propagation.
-        // Preserve any existing guild commands while adding/updating /parler.
+        // /parler is registered globally above. Remove any legacy guild-scoped copy
+        // left by older deployments so Discord only exposes one /parler command.
         const guildId = process.env.GUILD_ID;
-        // Ensure the voice command is loaded even if command discovery skipped it
-        // (for example due to a duplicate command name or loader ordering).
-        let voiceCommand = client.commands.get('parler');
-        if (!voiceCommand) {
-            const voiceModule = await import('../../commands/AI/parler.js');
-            voiceCommand = voiceModule.default;
-            if (voiceCommand?.data?.name === 'parler' && typeof voiceCommand.execute === 'function') {
-                client.commands.set('parler', voiceCommand);
-                logger.info('Loaded /parler explicitly for voice command registration');
-            }
-        }
-        if (guildId && voiceCommand?.data?.toJSON) {
+        if (guildId) {
             const guildRoute = `/applications/${clientId}/guilds/${guildId}/commands`;
-            const existingGuildCommands = await client.rest.get(guildRoute);
-            const voicePayload = voiceCommand.data.toJSON();
-            const guildCommands = [
-                ...(Array.isArray(existingGuildCommands)
-                    ? existingGuildCommands.filter(command => command.name !== voicePayload.name)
-                    : []),
-                voicePayload,
-            ];
-            await client.rest.put(guildRoute, { body: guildCommands });
-            logger.info('Registered /parler as an immediate guild slash command');
+            try {
+                const existingGuildCommands = await client.rest.get(guildRoute);
+                if (Array.isArray(existingGuildCommands)) {
+                    const remainingCommands = existingGuildCommands.filter(command => command.name !== 'parler');
+                    if (remainingCommands.length !== existingGuildCommands.length) {
+                        await client.rest.put(guildRoute, { body: remainingCommands });
+                        logger.info('Removed duplicate guild-scoped /parler; the global /parler remains registered.');
+                    }
+                }
+            } catch (cleanupError) {
+                logger.warn('Could not remove legacy guild-scoped /parler:', cleanupError.message);
+            }
         }
     } catch (error) {
         logger.error('Error registering commands:', error);
