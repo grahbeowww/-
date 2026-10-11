@@ -12,7 +12,11 @@ import prism from 'prism-media';
 import OpenAI, { toFile } from 'openai';
 import { Readable } from 'node:stream';
 import { once } from 'node:events';
-import { spawn } from 'node:child_process';
+import { readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { EdgeTTS } from 'node-edge-tts';
 import ffmpegPath from 'ffmpeg-static';
 
 const groq = new OpenAI({
@@ -66,33 +70,24 @@ async function transcribe(pcm) {
 }
 
 async function makeSpeech(text) {
-    return new Promise((resolve, reject) => {
-        const child = spawn('espeak-ng', [
-            '-v', 'fr-fr',
-            '-s', '150',
-            '--stdout',
-            text,
-        ]);
-
-        const chunks = [];
-        child.stdout.on('data', chunk => chunks.push(chunk));
-        child.on('error', reject);
-
-        child.on('close', code => {
-            if (code !== 0) {
-                reject(new Error(`eSpeak NG a échoué : code ${code}`));
-                return;
-            }
-
-            const audio = Buffer.concat(chunks);
-            if (!audio.length) {
-                reject(new Error('Aucun audio produit par eSpeak NG.'));
-                return;
-            }
-
-            resolve(audio);
+    // Voix masculine française naturelle, sans clé API payante.
+    const filePath = join(tmpdir(), `dante-${randomUUID()}.mp3`);
+    try {
+        const tts = new EdgeTTS({
+            voice: 'fr-FR-HenriNeural',
+            lang: 'fr-FR',
+            outputFormat: 'audio-24khz-96kbitrate-mono-mp3',
+            rate: '-5%',
+            pitch: '-2Hz',
+            timeout: 15000,
         });
-    });
+        await tts.ttsPromise(text, filePath);
+        const audio = await readFile(filePath);
+        if (!audio.length) throw new Error('La voix naturelle n’a produit aucun audio.');
+        return audio;
+    } finally {
+        await rm(filePath, { force: true }).catch(() => {});
+    }
 }
 
 async function respondAndSpeak(guildId, text, username) {
@@ -105,16 +100,21 @@ async function respondAndSpeak(guildId, text, username) {
             {
                 role: 'system',
                 content:
-                    'Tu es Dante, un assistant vocal Discord sympa et naturel. ' +
-                    'Réponds toujours en français, en 1 à 3 phrases courtes, ' +
-                    'avec un ton chaleureux et facile à prononcer.',
+                    'Tu es Dante, un pote français sympa dans un salon vocal Discord. ' +
+                    'Parle comme une vraie personne, avec un ton détendu et naturel, pas comme un assistant administratif. ' +
+                    'Comprends le français familier, les abréviations et l’argot. ' +
+                    'Réponds directement à ce que la personne veut dire, pas à une interprétation bizarre de ses mots. ' +
+                    'Si la transcription est manifestement incohérente, demande simplement de répéter au lieu d’inventer. ' +
+                    'Fais une réponse courte, généralement une seule phrase, sans listes, sans emojis, sans astérisques, ' +
+                    'sans annoncer les ponctuations et sans formules toutes faites. ' +
+                    'Écris des phrases fluides adaptées à une voix parlée.',
             },
             {
                 role: 'user',
                 content: `${username} dit : ${text}`,
             },
         ],
-        max_tokens: 180,
+        max_tokens: 110,
     });
 
     const reply = result.choices?.[0]?.message?.content?.trim();
