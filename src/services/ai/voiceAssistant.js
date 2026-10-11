@@ -171,7 +171,7 @@ async function captureSpeaker(guildId, userId) {
         const stream = session.connection.receiver.subscribe(userId, {
             end: {
                 behavior: EndBehaviorType.AfterSilence,
-                duration: 500,
+                duration: 800,
             },
         });
 
