@@ -78,7 +78,7 @@ async function makeSpeech(text) {
             voice: 'fr-FR-HenriNeural',
             lang: 'fr-FR',
             outputFormat: 'audio-24khz-96kbitrate-mono-mp3',
-            rate: '+20%',
+            rate: '0%',
             pitch: '-2Hz',
             timeout: 15000,
         });
@@ -115,7 +115,8 @@ async function respondAndSpeak(guildId, text, username) {
                 content: `${username} dit : ${text}`,
             },
         ],
-        max_tokens: 180,
+        max_tokens: 100,
+        temperature: 0.3,
     });
 
     const reply = result.choices?.[0]?.message?.content?.trim();
@@ -211,7 +212,7 @@ async function captureSpeaker(guildId, userId) {
         console.log(`[Dante voice] Transcription : ${transcript || '(vide)'}`);
 
         // Les modèles de transcription peuvent halluciner sur le silence ou le bruit.
-        const normalized = transcript.toLocaleLowerCase('fr-FR').replace(/[^\p{L}\p{N} ]/gu, '').trim();
+        const normalized = transcript.toLocaleLowerCase('fr-FR').normalize('NFD').replace(/\p{Diacritic}/gu, '').replace(/[^\p{L}\p{N} ]/gu, '').trim();
         const likelyHallucination = [
             'sous titrage societe radio canada',
             'sous titrage radio canada',
