@@ -55,7 +55,11 @@ async function respondAndSpeak(guildId, text, username) {
         max_output_tokens: 180,
     });
     const reply = answer.output_text?.trim();
-    if (!reply || !sessions.has(guildId)) return;
+    if (!reply || !sessions.has(guildId)) {
+        console.warn('[Dante voice] Réponse IA vide ou session arrêtée.');
+        return;
+    }
+    console.log(`[Dante voice] Réponse générée (${reply.length} caractères), synthèse vocale en cours.`);
     const speech = await openai.audio.speech.create({
         model: 'gpt-4o-mini-tts',
         voice: 'onyx',
@@ -69,6 +73,7 @@ async function respondAndSpeak(guildId, text, username) {
     const resource = createAudioResource(Readable.from([audio]), { inputType: StreamType.Arbitrary });
     session.player.stop(true);
     session.player.play(resource);
+    console.log(`[Dante voice] Lecture vocale lancée (${audio.length} octets MP3).`);
 }
 
 async function captureSpeaker(guildId, userId) {
@@ -90,10 +95,18 @@ async function captureSpeaker(guildId, userId) {
         await Promise.race([once(decoder, 'end'), once(decoder, 'error').then(([e]) => Promise.reject(e))]);
         const pcm = Buffer.concat(chunks);
         if (pcm.length < 48000 * 2 * 2 * 0.35) return;
+        console.log(`[Dante voice] Flux terminé pour ${member.displayName}, PCM=${pcm.length} octets.`);
+        if (pcm.length < 48000 * 2 * 2 * 0.35) {
+            console.warn(`[Dante voice] Audio trop court pour ${member.displayName}.`);
+            return;
+        }
+        console.log(`[Dante voice] Flux terminé pour ${member.displayName}, PCM=${pcm.length} octets.`);
         const transcript = await transcribe(pcm);
+        console.log(`[Dante voice] Transcription pour ${member.displayName}: ${transcript || '(vide)'}`);
         if (transcript) await respondAndSpeak(guildId, transcript, member.displayName);
+        else console.warn('[Dante voice] Aucun texte reconnu.');
     } catch (error) {
-        if (process.env.NODE_ENV !== 'production') console.error('[Dante voice]', error);
+        console.error('[Dante voice] Erreur pendant réception/transcription/réponse:', error);
     } finally {
         session.busy.delete(userId);
     }
@@ -110,10 +123,17 @@ export async function startVoiceAssistant(guild, channel, botId) {
         selfMute: false,
     });
     const player = createAudioPlayer();
+    player.on('error', error => console.error('[Dante voice] Erreur du lecteur audio:', error));
+    player.on('stateChange', (oldState, newState) => {
+        if (newState.status === AudioPlayerStatus.Playing) console.log('[Dante voice] Le lecteur audio est en lecture.');
+        if (newState.status === AudioPlayerStatus.Idle && oldState.status === AudioPlayerStatus.Playing) console.log('[Dante voice] Lecture audio terminée.');
+    });
+    connection.on('error', error => console.error('[Dante voice] Erreur de connexion vocale:', error));
     connection.subscribe(player);
     const session = { guild, connection, player, busy: new Set(), botId };
     sessions.set(guild.id, session);
     connection.receiver.speaking.on('start', userId => {
+        console.log(`[Dante voice] Détection de parole: userId=${userId}`);
         void captureSpeaker(guild.id, userId);
     });
     try {
