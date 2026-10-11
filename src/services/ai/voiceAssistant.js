@@ -149,6 +149,8 @@ async function captureSpeaker(guildId, userId) {
     if (
         !session ||
         session.busy.has(userId) ||
+        session.processing ||
+        session.player.state.status === AudioPlayerStatus.Playing ||
         session.botId === userId
     ) return;
 
@@ -159,12 +161,13 @@ async function captureSpeaker(guildId, userId) {
     if (!member || member.user.bot) return;
 
     session.busy.add(userId);
+    session.processing = true;
 
     try {
         const stream = session.connection.receiver.subscribe(userId, {
             end: {
                 behavior: EndBehaviorType.AfterSilence,
-                duration: 900,
+                duration: 650,
             },
         });
 
@@ -212,6 +215,7 @@ async function captureSpeaker(guildId, userId) {
         console.error('[Dante voice] Erreur audio ou IA :', error);
     } finally {
         session.busy.delete(userId);
+        session.processing = false;
     }
 }
 
@@ -253,6 +257,7 @@ export async function startVoiceAssistant(guild, channel, botId) {
         connection,
         player,
         busy: new Set(),
+        processing: false,
         botId,
     };
 
