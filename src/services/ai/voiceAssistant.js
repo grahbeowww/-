@@ -1,11 +1,25 @@
-import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, VoiceConnectionStatus, EndBehaviorType, entersState, StreamType } from '@discordjs/voice';
+import {
+    joinVoiceChannel,
+    createAudioPlayer,
+    createAudioResource,
+    AudioPlayerStatus,
+    VoiceConnectionStatus,
+    EndBehaviorType,
+    entersState,
+    StreamType,
+} from '@discordjs/voice';
 import prism from 'prism-media';
 import OpenAI, { toFile } from 'openai';
 import { Readable } from 'node:stream';
 import { once } from 'node:events';
+import { spawn } from 'node:child_process';
 import ffmpegPath from 'ffmpeg-static';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const groq = new OpenAI({
+    apiKey: process.env.GROQ_API_KEY,
+    baseURL: 'https://api.groq.com/openai/v1',
+});
+
 const sessions = new Map();
 
 function wavFromPcm(pcm, sampleRate = 48000, channels = 2) {
@@ -27,94 +41,186 @@ function wavFromPcm(pcm, sampleRate = 48000, channels = 2) {
 }
 
 function ensureFfmpegOnPath() {
-    if (ffmpegPath) {
-        const pathParts = (process.env.PATH || '').split(':');
-        const directory = ffmpegPath.slice(0, ffmpegPath.lastIndexOf('/'));
-        if (!pathParts.includes(directory)) process.env.PATH = directory + ':' + (process.env.PATH || '');
+    if (!ffmpegPath) return;
+    const directory = ffmpegPath.slice(0, ffmpegPath.lastIndexOf('/'));
+    const parts = (process.env.PATH || '').split(':');
+    if (!parts.includes(directory)) {
+        process.env.PATH = `${directory}:${process.env.PATH || ''}`;
     }
 }
 
 async function transcribe(pcm) {
-    const wav = wavFromPcm(pcm);
-    const file = await toFile(wav, 'discord-audio.wav', { type: 'audio/wav' });
-    const result = await openai.audio.transcriptions.create({
-        model: 'gpt-4o-mini-transcribe',
+    const file = await toFile(
+        wavFromPcm(pcm),
+        'discord-audio.wav',
+        { type: 'audio/wav' },
+    );
+
+    const result = await groq.audio.transcriptions.create({
+        model: 'whisper-large-v3-turbo',
         file,
         language: 'fr',
     });
+
     return result.text?.trim() || '';
+}
+
+async function makeSpeech(text) {
+    return new Promise((resolve, reject) => {
+        const child = spawn('espeak-ng', [
+            '-v', 'fr-fr',
+            '-s', '150',
+            '--stdout',
+            text,
+        ]);
+
+        const chunks = [];
+        child.stdout.on('data', chunk => chunks.push(chunk));
+        child.on('error', reject);
+
+        child.on('close', code => {
+            if (code !== 0) {
+                reject(new Error(`eSpeak NG a échoué : code ${code}`));
+                return;
+            }
+
+            const audio = Buffer.concat(chunks);
+            if (!audio.length) {
+                reject(new Error('Aucun audio produit par eSpeak NG.'));
+                return;
+            }
+
+            resolve(audio);
+        });
+    });
 }
 
 async function respondAndSpeak(guildId, text, username) {
     const session = sessions.get(guildId);
     if (!session || !text) return;
-    const answer = await openai.responses.create({
-        model: 'gpt-4.1-mini',
-        instructions: 'Tu es Dante, un assistant vocal Discord sympa, naturel et concis. Réponds en français, à l’oral, en 1 à 3 phrases. Tu as une voix masculine.',
-        input: `${username} dit : ${text}`,
-        max_output_tokens: 180,
+
+    const result = await groq.chat.completions.create({
+        model: 'openai/gpt-oss-20b',
+        messages: [
+            {
+                role: 'system',
+                content:
+                    'Tu es Dante, un assistant vocal Discord sympa et naturel. ' +
+                    'Réponds toujours en français, en 1 à 3 phrases courtes, ' +
+                    'avec un ton chaleureux et facile à prononcer.',
+            },
+            {
+                role: 'user',
+                content: `${username} dit : ${text}`,
+            },
+        ],
+        max_tokens: 180,
     });
-    const reply = answer.output_text?.trim();
+
+    const reply = result.choices?.[0]?.message?.content?.trim();
+
     if (!reply || !sessions.has(guildId)) {
-        console.warn('[Dante voice] Réponse IA vide ou session arrêtée.');
+        console.warn('[Dante voice] Réponse vide ou session arrêtée.');
         return;
     }
-    console.log(`[Dante voice] Réponse générée (${reply.length} caractères), synthèse vocale en cours.`);
-    const speech = await openai.audio.speech.create({
-        model: 'gpt-4o-mini-tts',
-        voice: 'onyx',
-        response_format: 'mp3',
-        input: reply,
-        instructions: 'Voix masculine grave, naturelle, chaleureuse, français de France. Parle clairement et sans exagération.',
-    });
+
+    console.log(`[Dante voice] Réponse Groq : ${reply}`);
+
+    const audio = await makeSpeech(reply);
     if (!sessions.has(guildId)) return;
+
     ensureFfmpegOnPath();
-    const audio = Buffer.from(await speech.arrayBuffer());
-    const resource = createAudioResource(Readable.from([audio]), { inputType: StreamType.Arbitrary });
+
+    const resource = createAudioResource(
+        Readable.from([audio]),
+        { inputType: StreamType.Arbitrary },
+    );
+
     session.player.stop(true);
     session.player.play(resource);
-    console.log(`[Dante voice] Lecture vocale lancée (${audio.length} octets MP3).`);
+
+    console.log('[Dante voice] Lecture vocale locale lancée.');
 }
 
 async function captureSpeaker(guildId, userId) {
     const session = sessions.get(guildId);
-    if (!session || session.busy.has(userId) || session.botId === userId) return;
-    const member = await session.guild.members.fetch(userId).catch(() => null);
+
+    if (
+        !session ||
+        session.busy.has(userId) ||
+        session.botId === userId
+    ) return;
+
+    const member = await session.guild.members
+        .fetch(userId)
+        .catch(() => null);
+
     if (!member || member.user.bot) return;
+
     session.busy.add(userId);
+
     try {
         const stream = session.connection.receiver.subscribe(userId, {
-            end: { behavior: EndBehaviorType.AfterSilence, duration: 900 },
+            end: {
+                behavior: EndBehaviorType.AfterSilence,
+                duration: 900,
+            },
         });
-        const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
+
+        const decoder = new prism.opus.Decoder({
+            rate: 48000,
+            channels: 2,
+            frameSize: 960,
+        });
+
         const chunks = [];
-        stream.pipe(decoder);
+        let totalBytes = 0;
+
         decoder.on('data', chunk => {
-            if (chunks.reduce((n, b) => n + b.length, 0) < 48000 * 2 * 2 * 20) chunks.push(chunk);
+            if (totalBytes + chunk.length <= 48000 * 2 * 2 * 20) {
+                chunks.push(chunk);
+                totalBytes += chunk.length;
+            }
         });
-        await Promise.race([once(decoder, 'end'), once(decoder, 'error').then(([e]) => Promise.reject(e))]);
+
+        stream.pipe(decoder);
+
+        await Promise.race([
+            once(decoder, 'end'),
+            once(decoder, 'error').then(([error]) => {
+                throw error;
+            }),
+        ]);
+
         const pcm = Buffer.concat(chunks);
-        if (pcm.length < 48000 * 2 * 2 * 0.35) return;
-        console.log(`[Dante voice] Flux terminé pour ${member.displayName}, PCM=${pcm.length} octets.`);
+
         if (pcm.length < 48000 * 2 * 2 * 0.35) {
-            console.warn(`[Dante voice] Audio trop court pour ${member.displayName}.`);
+            console.warn(`[Dante voice] Audio trop court : ${member.displayName}.`);
             return;
         }
-        console.log(`[Dante voice] Flux terminé pour ${member.displayName}, PCM=${pcm.length} octets.`);
+
+        console.log(`[Dante voice] Audio reçu de ${member.displayName}.`);
+
         const transcript = await transcribe(pcm);
-        console.log(`[Dante voice] Transcription pour ${member.displayName}: ${transcript || '(vide)'}`);
-        if (transcript) await respondAndSpeak(guildId, transcript, member.displayName);
-        else console.warn('[Dante voice] Aucun texte reconnu.');
+        console.log(`[Dante voice] Transcription : ${transcript || '(vide)'}`);
+
+        if (transcript) {
+            await respondAndSpeak(guildId, transcript, member.displayName);
+        }
     } catch (error) {
-        console.error('[Dante voice] Erreur pendant réception/transcription/réponse:', error);
+        console.error('[Dante voice] Erreur audio ou IA :', error);
     } finally {
         session.busy.delete(userId);
     }
 }
 
 export async function startVoiceAssistant(guild, channel, botId) {
-    if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY est absente.');
+    if (!process.env.GROQ_API_KEY) {
+        throw new Error('La variable GROQ_API_KEY est absente.');
+    }
+
     stopVoiceAssistant(guild.id);
+
     const connection = joinVoiceChannel({
         channelId: channel.id,
         guildId: guild.id,
@@ -122,34 +228,58 @@ export async function startVoiceAssistant(guild, channel, botId) {
         selfDeaf: false,
         selfMute: false,
     });
+
     const player = createAudioPlayer();
-    player.on('error', error => console.error('[Dante voice] Erreur du lecteur audio:', error));
+
+    player.on('error', error =>
+        console.error('[Dante voice] Erreur du lecteur audio :', error),
+    );
+
     player.on('stateChange', (oldState, newState) => {
-        if (newState.status === AudioPlayerStatus.Playing) console.log('[Dante voice] Le lecteur audio est en lecture.');
-        if (newState.status === AudioPlayerStatus.Idle && oldState.status === AudioPlayerStatus.Playing) console.log('[Dante voice] Lecture audio terminée.');
+        if (newState.status === AudioPlayerStatus.Playing) {
+            console.log('[Dante voice] Dante parle.');
+        }
     });
-    connection.on('error', error => console.error('[Dante voice] Erreur de connexion vocale:', error));
+
+    connection.on('error', error =>
+        console.error('[Dante voice] Erreur de connexion :', error),
+    );
+
     connection.subscribe(player);
-    const session = { guild, connection, player, busy: new Set(), botId };
+
+    const session = {
+        guild,
+        connection,
+        player,
+        busy: new Set(),
+        botId,
+    };
+
     sessions.set(guild.id, session);
+
     connection.receiver.speaking.on('start', userId => {
-        console.log(`[Dante voice] Détection de parole: userId=${userId}`);
+        console.log(`[Dante voice] Parole détectée : ${userId}`);
         void captureSpeaker(guild.id, userId);
     });
+
     try {
         await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
     } catch (error) {
         stopVoiceAssistant(guild.id);
         throw error;
     }
+
+    console.log('[Dante voice] Assistant vocal prêt.');
     return session;
 }
 
 export function stopVoiceAssistant(guildId) {
     const session = sessions.get(guildId);
     if (!session) return false;
+
     sessions.delete(guildId);
     session.player.stop(true);
     session.connection.destroy();
+
     return true;
 }
