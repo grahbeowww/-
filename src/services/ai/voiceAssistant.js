@@ -26,7 +26,20 @@ const groq = new OpenAI({
 
 const sessions = new Map();
 
-function wavFromPcm(pcm, sampleRate = 48000, channels = 2) {
+function stereoToMono(pcm) {
+    // Le flux vocal Discord est du PCM 16 bits stéréo ; on le convertit en mono pour la transcription.
+    const mono = Buffer.allocUnsafe(Math.floor(pcm.length / 4) * 2);
+    let out = 0;
+    for (let i = 0; i + 3 < pcm.length; i += 4) {
+        const left = pcm.readInt16LE(i);
+        const right = pcm.readInt16LE(i + 2);
+        mono.writeInt16LE(Math.round((left + right) / 2), out);
+        out += 2;
+    }
+    return mono;
+}
+
+function wavFromPcm(pcm, sampleRate = 48000, channels = 1) {
     const header = Buffer.alloc(44);
     header.write('RIFF', 0);
     header.writeUInt32LE(36 + pcm.length, 4);
@@ -54,8 +67,9 @@ function ensureFfmpegOnPath() {
 }
 
 async function transcribe(pcm) {
+    const monoPcm = stereoToMono(pcm);
     const file = await toFile(
-        wavFromPcm(pcm),
+        wavFromPcm(monoPcm),
         'discord-audio.wav',
         { type: 'audio/wav' },
     );
@@ -64,7 +78,7 @@ async function transcribe(pcm) {
         model: 'whisper-large-v3',
         file,
         language: 'fr',
-        prompt: 'Français de France parlé spontanément sur Discord entre amis, souvent en jouant. Reconnais le français familier, les mots raccourcis, les noms de jeux et le vocabulaire gaming. Respecte exactement les mots entendus, même si la phrase est familière ou grossière. Ne complète pas les phrases par supposition. Si le son est incompréhensible, transcris seulement ce qui est réellement audible. N’invente jamais de sous-titres ni de commentaires.',
+        prompt: 'Conversation orale en français de France sur Discord entre amis qui jouent ensemble. Garde les formulations familières, l’argot, les contractions et les jurons. Fais attention aux pseudos et termes de jeux vidéo. Transcris uniquement les paroles réellement audibles : ne reformule pas, ne devine pas et n’ajoute aucun commentaire.',
     });
 
     return result.text?.trim() || '';
