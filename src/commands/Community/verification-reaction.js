@@ -78,7 +78,7 @@ export default {
 
     if (role.id === guild.id || role.managed ||
         role.position >= botMember.roles.highest.position ||
-        role.permissions.has(DANGEROUS_ROLE_PERMISSIONS)) {
+        DANGEROUS_ROLE_PERMISSIONS.some(permission => role.permissions.has(permission))) {
       return interaction.reply({
         content: 'Je ne peux pas attribuer ce rôle. Choisis un rôle classique, sans permissions dangereuses, et place mon rôle au-dessus de **' + role.name + '** dans **Paramètres du serveur → Rôles**.',
         ephemeral: true,
