@@ -61,7 +61,7 @@ async function transcribe(pcm) {
     );
 
     const result = await groq.audio.transcriptions.create({
-        model: 'whisper-large-v3-turbo',
+        model: 'whisper-large-v3',
         file,
         language: 'fr',
         prompt: 'Conversation orale spontanée en français de France entre amis sur Discord. Français familier, expressions courantes et argot. Transcris uniquement les mots réellement entendus, sans inventer de sous-titres, de musique ou de contenu de fond.',
@@ -115,7 +115,7 @@ async function respondAndSpeak(guildId, text, username) {
                 content: `${username} dit : ${text}`,
             },
         ],
-        max_tokens: 110,
+        max_tokens: 75,
     });
 
     const reply = result.choices?.[0]?.message?.content?.trim();
@@ -146,9 +146,10 @@ async function respondAndSpeak(guildId, text, username) {
 async function captureSpeaker(guildId, userId) {
     const session = sessions.get(guildId);
 
+    // Une seule conversation à la fois : évite les transcriptions qui se chevauchent
+    // et empêche Dante de répondre à un joueur avec les paroles d'un autre.
     if (
         !session ||
-        session.busy.has(userId) ||
         session.processing ||
         session.player.state.status === AudioPlayerStatus.Playing ||
         session.botId === userId
@@ -158,10 +159,11 @@ async function captureSpeaker(guildId, userId) {
         .fetch(userId)
         .catch(() => null);
 
-    if (!member || member.user.bot) return;
+    if (!member || member.user.bot || !sessions.has(guildId)) return;
 
-    session.busy.add(userId);
+    // Verrouiller AVANT le premier await du traitement audio, pour éviter les courses.
     session.processing = true;
+    session.busy.add(userId);
 
     try {
         const stream = session.connection.receiver.subscribe(userId, {
@@ -208,8 +210,19 @@ async function captureSpeaker(guildId, userId) {
         const transcript = await transcribe(pcm);
         console.log(`[Dante voice] Transcription : ${transcript || '(vide)'}`);
 
-        if (transcript) {
+        // Les modèles de transcription peuvent halluciner sur le silence ou le bruit.
+        const normalized = transcript.toLocaleLowerCase('fr-FR').replace(/[^\p{L}\p{N} ]/gu, '').trim();
+        const likelyHallucination = [
+            'sous titrage societe radio canada',
+            'sous titrage radio canada',
+            'merci',
+            'visage souriant',
+        ].includes(normalized);
+
+        if (transcript && !likelyHallucination && sessions.has(guildId)) {
             await respondAndSpeak(guildId, transcript, member.displayName);
+        } else if (likelyHallucination) {
+            console.warn('[Dante voice] Transcription probablement parasite ignorée.');
         }
     } catch (error) {
         console.error('[Dante voice] Erreur audio ou IA :', error);
