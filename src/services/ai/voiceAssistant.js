@@ -59,7 +59,7 @@ async function respondAndSpeak(guildId, text, username) {
     const speech = await openai.audio.speech.create({
         model: 'gpt-4o-mini-tts',
         voice: 'onyx',
-        format: 'mp3',
+        response_format: 'mp3',
         input: reply,
         instructions: 'Voix masculine grave, naturelle, chaleureuse, français de France. Parle clairement et sans exagération.',
     });
