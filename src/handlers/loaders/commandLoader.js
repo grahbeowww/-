@@ -274,7 +274,17 @@ export async function registerCommands(client, options = {}) {
         // immediately instead of waiting for global slash-command propagation.
         // Preserve any existing guild commands while adding/updating /parler.
         const guildId = process.env.GUILD_ID;
-        const voiceCommand = client.commands.get('parler');
+        // Ensure the voice command is loaded even if command discovery skipped it
+        // (for example due to a duplicate command name or loader ordering).
+        let voiceCommand = client.commands.get('parler');
+        if (!voiceCommand) {
+            const voiceModule = await import('../../commands/AI/parler.js');
+            voiceCommand = voiceModule.default;
+            if (voiceCommand?.data?.name === 'parler' && typeof voiceCommand.execute === 'function') {
+                client.commands.set('parler', voiceCommand);
+                logger.info('Loaded /parler explicitly for voice command registration');
+            }
+        }
         if (guildId && voiceCommand?.data?.toJSON) {
             const guildRoute = `/applications/${clientId}/guilds/${guildId}/commands`;
             const existingGuildCommands = await client.rest.get(guildRoute);
