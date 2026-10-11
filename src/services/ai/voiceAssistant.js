@@ -61,7 +61,7 @@ async function transcribe(pcm) {
     );
 
     const result = await groq.audio.transcriptions.create({
-        model: 'whisper-large-v3-turbo',
+        model: 'whisper-large-v3',
         file,
         language: 'fr',
         prompt: 'Français de France parlé spontanément sur Discord entre amis, souvent en jouant. Reconnais le français familier, les mots raccourcis, les noms de jeux et le vocabulaire gaming. Respecte exactement les mots entendus, même si la phrase est familière ou grossière. Ne complète pas les phrases par supposition. Si le son est incompréhensible, transcris seulement ce qui est réellement audible. N’invente jamais de sous-titres ni de commentaires.',
