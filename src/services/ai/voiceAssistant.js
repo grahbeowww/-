@@ -64,6 +64,7 @@ async function transcribe(pcm) {
         model: 'whisper-large-v3-turbo',
         file,
         language: 'fr',
+        prompt: 'Conversation orale spontanée en français de France entre amis sur Discord. Français familier, expressions courantes et argot. Transcris uniquement les mots réellement entendus, sans inventer de sous-titres, de musique ou de contenu de fond.',
     });
 
     return result.text?.trim() || '';
