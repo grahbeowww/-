@@ -115,8 +115,9 @@ async function respondAndSpeak(guildId, text, username) {
                 content: `${username} dit : ${text}`,
             },
         ],
-        max_tokens: 100,
+        max_tokens: 512,
         temperature: 0.3,
+        reasoning_effort: 'low',
     });
 
     const reply = result.choices?.[0]?.message?.content?.trim();
