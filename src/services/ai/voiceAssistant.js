@@ -115,7 +115,7 @@ async function respondAndSpeak(guildId, text, username) {
                 content: `${username} dit : ${text}`,
             },
         ],
-        max_tokens: 512,
+        max_tokens: 192,
         temperature: 0.3,
         reasoning_effort: 'low',
     });
